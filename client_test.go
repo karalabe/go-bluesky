@@ -6,7 +6,6 @@ package bluesky
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 )
 
@@ -28,5 +27,7 @@ func TestLogin(t *testing.T) {
 	if err := client.Login(testAuthHandle, testAuthPasswd); !errors.Is(err, ErrLoginUnauthorized) || !errors.Is(err, ErrMasterCredentials) {
 		t.Errorf("master password error mismatch: have %v, want %v: %v", err, ErrLoginUnauthorized, ErrMasterCredentials)
 	}
-	fmt.Println(client.Login(testAuthHandle, testAuthAppkey))
+	if err := client.Login(testAuthHandle, testAuthAppkey); err != nil {
+		t.Errorf("app password error mismatch: have %v, want %v", err, nil)
+	}
 }

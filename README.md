@@ -25,7 +25,8 @@ env vars and run the tests via the normal Go workflow.
 $ export GOBLUESKY_TEST_HANDLE=example.com
 $ export GOBLUESKY_TEST_PASSWD=my-pass-phrase
 $ export GOBLUESKY_TEST_APPKEY=1234-5678-9abc-def0
-$ go test ./...
+
+$ go test -v
 ```
 
 ## License
