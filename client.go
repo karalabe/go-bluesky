@@ -8,10 +8,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"sync"
+	"time"
 
 	"github.com/bluesky-social/indigo/api/atproto"
 	"github.com/bluesky-social/indigo/xrpc"
 	"github.com/golang-jwt/jwt/v5"
+)
+
+var (
+	// jwtAsyncRefreshThreshold is the remaining validity time of a JWT token
+	// below which to trigger a session refresh on a background thread (i.e.
+	// the client can still be actively used during).
+	jwtAsyncRefreshThreshold = 5 * time.Minute
+
+	// jwtSyncRefreshThreshold is the remaining validity time of a JWT token
+	// below which to trigger a session refresh on a foreground thread (i.e.
+	// the client blocks new API calls until the refresh finishes).
+	jwtSyncRefreshThreshold = 2 * time.Minute
 )
 
 var (
@@ -23,31 +38,37 @@ var (
 	// are valid on the Bluesky server, but they are the user's master password.
 	// Since that is a security malpractice, this library forbids it.
 	ErrMasterCredentials = errors.New("master credentials used")
+
+	// ErrSessionExpired is returned from any API call if the underlying session
+	// has expired and a new login from scratch is required.
+	ErrSessionExpired = errors.New("session expired")
 )
 
 // Client is an API client attached to (and authenticated to) a Bluesky PDS instance.
 type Client struct {
-	client *xrpc.Client
+	client *xrpc.Client // Underlying XRPC transport conencted to the API
+
+	jwtCurrentExpire time.Time                   // Expiration time for the current JWT token
+	jwtRefreshExpire time.Time                   // Expiration time for the refresh JWT token
+	jwtAsyncRefresh  chan struct{}               // Channel tracking if an async refresher is running
+	jwtRefreshHook   func(skip bool, async bool) // Testing hook to monitor when a refresh is triggered
+	jwtLock          sync.RWMutex                // Lock protecting the JWT auth fields
 }
 
 // Dial connects to a remote Bluesky server and exchanges some basic information
 // to ensure the connectivity works.
 func Dial(server string) (*Client, error) {
-	return DialWithClient(server, new(xrpc.Client))
+	return DialWithClient(server, new(http.Client))
 }
 
 // DialWithClient connects to a remote Bluesky server using a user supplied HTTP
-// (XRPC) client and exchanges some basic information to ensure the connectivity
-// works.
-//
-// Note, the host configuration of the provided client is ignored and rather the
-// one specified as the dial server will be used.
-func DialWithClient(server string, client *xrpc.Client) (*Client, error) {
-	// Copy the client to override the host field
-	local := new(xrpc.Client)
-	*local = *client
-	local.Host = server
-
+// client and exchanges some basic information to ensure the connectivity works.
+func DialWithClient(server string, client *http.Client) (*Client, error) {
+	// Create the XRPC client from the supplied HTTP one
+	local := &xrpc.Client{
+		Client: client,
+		Host:   server,
+	}
 	// Do a sanity check with the server to ensure everything works. We don't
 	// really care about the response as long as we get a meaningful one.
 	if _, err := atproto.ServerDescribeServer(context.Background(), local); err != nil {
@@ -80,11 +101,151 @@ func (c *Client) Login(handle string, appkey string) error {
 	if token.Claims.(jwt.MapClaims)["scope"] != "com.atproto.appPass" {
 		return fmt.Errorf("%w: %w", ErrLoginUnauthorized, ErrMasterCredentials)
 	}
+	// Retrieve the expirations for the current and refresh JWT tokens
+	current, err := token.Claims.GetExpirationTime()
+	if err != nil {
+		return err
+	}
+	if token, _, err = jwt.NewParser().ParseUnverified(sess.RefreshJwt, jwt.MapClaims{}); err != nil {
+		return err
+	}
+	refresh, err := token.Claims.GetExpirationTime()
+	if err != nil {
+		return err
+	}
+	// Construct the authenticated client and the JWT expiration metadata
 	c.client.Auth = &xrpc.AuthInfo{
 		AccessJwt:  sess.AccessJwt,
 		RefreshJwt: sess.RefreshJwt,
 		Handle:     sess.Handle,
 		Did:        sess.Did,
 	}
+	c.jwtCurrentExpire = current.Time
+	c.jwtRefreshExpire = refresh.Time
+	c.jwtAsyncRefresh = make(chan struct{}, 1) // 1 async refresher allowed concurrently
+
+	return nil
+}
+
+// maybeRefreshJWT checks the remainder validity time of the JWT token and does
+// a session refresh if it is necessary. Depending on the amount of time it is
+// still valid it might attempt a refresh on a background thread (permitting the
+// current thread to proceed) or blocking the thread and doing a sync refresh.
+func (c *Client) maybeRefreshJWT() error {
+	// If the JWT token is still valid for a long time, use as is
+	c.jwtLock.RLock()
+	var (
+		validAsync = time.Until(c.jwtCurrentExpire) > jwtAsyncRefreshThreshold
+		validSync  = time.Until(c.jwtCurrentExpire) > jwtSyncRefreshThreshold
+	)
+	c.jwtLock.RUnlock()
+
+	if validAsync {
+		return nil
+	}
+	// If the JWT token is still valid enough for an async refresh, do that and
+	// not block the API call for it
+	if validSync {
+		select {
+		case c.jwtAsyncRefresh <- struct{}{}:
+			// We're the first to attempt a background refresh, do it
+			go func() {
+				c.refreshJWT(true)
+				<-c.jwtAsyncRefresh
+			}()
+			return nil
+
+		default:
+			// Someone else is already doing a background refresh, let them
+			return nil
+		}
+	}
+	// We've run out of the background refresh window, block the client on a
+	// synchronous refresh
+	c.jwtLock.Lock()
+	defer c.jwtLock.Unlock()
+
+	return c.refreshJWT(false)
+}
+
+// refreshJWT updates the JWT token and swaps out the credentials in the client.
+//
+// The async flag signals to the method whether it's running in async mode needing
+// locking to access the JWT fields or if it was locked and can yolo it directly.
+func (c *Client) refreshJWT(async bool) error {
+	// Double-check the JWT token's validity to avoid multiple concurrent calls
+	// being blocked and each refreshing the token. Async refresh is guaranteed
+	// to be single threaded so no need to recheck the threshold with that.
+	if !async && time.Until(c.jwtCurrentExpire) > jwtAsyncRefreshThreshold {
+		// JWT token was already refreshed by someone else, ignore request
+		if c.jwtRefreshHook != nil {
+			c.jwtRefreshHook(true, async)
+		}
+		return nil
+	}
+	if c.jwtRefreshHook != nil {
+		c.jwtRefreshHook(false, async)
+	}
+	// If the refresh token got invalidated too, bad luck
+	var expires time.Time
+	if async {
+		c.jwtLock.RLock()
+	}
+	expires = c.jwtRefreshExpire
+	if async {
+		c.jwtLock.RUnlock()
+	}
+	if time.Until(expires) < 0 {
+		return fmt.Errorf("%w: refresh token was valid until %v", ErrSessionExpired, expires)
+	}
+	// Attempt to refresh the JWT token. Since the client might be used async
+	// for other requests, create a copy with the fields we need to mess with.
+	refClient := new(xrpc.Client)
+	if async {
+		c.jwtLock.RLock()
+	}
+	*refClient = *c.client
+	refClient.Auth = new(xrpc.AuthInfo)
+	*refClient.Auth = *c.client.Auth
+
+	refClient.Auth.AccessJwt = refClient.Auth.RefreshJwt
+	if async {
+		c.jwtLock.RUnlock()
+	}
+	sess, err := atproto.ServerRefreshSession(context.Background(), refClient)
+	if err != nil {
+		return err
+	}
+	// Update the JWT token in the local client
+	token, _, err := jwt.NewParser().ParseUnverified(sess.AccessJwt, jwt.MapClaims{})
+	if err != nil {
+		return err
+	}
+	current, err := token.Claims.GetExpirationTime()
+	if err != nil {
+		return err
+	}
+	token, _, err = jwt.NewParser().ParseUnverified(sess.RefreshJwt, jwt.MapClaims{})
+	if err != nil {
+		return err
+	}
+	refresh, err := token.Claims.GetExpirationTime()
+	if err != nil {
+		return err
+	}
+	// Update the authenticated client and the JWT expiration metadata
+	if async {
+		c.jwtLock.Lock()
+		defer c.jwtLock.Unlock()
+	}
+	c.client.Auth = &xrpc.AuthInfo{
+		AccessJwt:  sess.AccessJwt,
+		RefreshJwt: sess.RefreshJwt,
+		Handle:     sess.Handle,
+		Did:        sess.Did,
+	}
+	c.jwtCurrentExpire = current.Time
+	c.jwtRefreshExpire = refresh.Time
+
 	return nil
 }
