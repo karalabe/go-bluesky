@@ -51,6 +51,7 @@ type Client struct {
 	jwtCurrentExpire time.Time                   // Expiration time for the current JWT token
 	jwtRefreshExpire time.Time                   // Expiration time for the refresh JWT token
 	jwtAsyncRefresh  chan struct{}               // Channel tracking if an async refresher is running
+	jwtRefresherStop chan chan struct{}          // Notification channel to stop the JWT refresher
 	jwtRefreshHook   func(skip bool, async bool) // Testing hook to monitor when a refresh is triggered
 	jwtLock          sync.RWMutex                // Lock protecting the JWT auth fields
 }
@@ -122,9 +123,43 @@ func (c *Client) Login(handle string, appkey string) error {
 	}
 	c.jwtCurrentExpire = current.Time
 	c.jwtRefreshExpire = refresh.Time
+
 	c.jwtAsyncRefresh = make(chan struct{}, 1) // 1 async refresher allowed concurrently
+	c.jwtRefresherStop = make(chan chan struct{})
+	go c.refresher()
 
 	return nil
+}
+
+// Close terminates the client, shutting down all pending tasks and background
+// operations.
+func (c *Client) Close() error {
+	// If the periodical JWT refresher is running, tear it down
+	if c.jwtRefresherStop != nil {
+		stopc := make(chan struct{})
+		c.jwtRefresherStop <- stopc
+		<-stopc
+
+		c.jwtRefresherStop = nil
+	}
+	return nil
+}
+
+// refresher is an infinite loop that periodically checks the validity of the JWT
+// tokens and runs a refresh cycle if they are getting close to expiration.
+func (c *Client) refresher() {
+	for {
+		// Attempt to refresh the JWT token
+		c.maybeRefreshJWT()
+
+		// Wait until some time passes or the client is closing down
+		select {
+		case <-time.After(time.Minute):
+		case stopc := <-c.jwtRefresherStop:
+			stopc <- struct{}{}
+			return
+		}
+	}
 }
 
 // maybeRefreshJWT checks the remainder validity time of the JWT token and does
@@ -248,4 +283,36 @@ func (c *Client) refreshJWT(async bool) error {
 	c.jwtRefreshExpire = refresh.Time
 
 	return nil
+}
+
+// CustomCall is a wildcard method for executing atproto API calls that are not
+// (yet?) implemented by this library. The user needs to provide a callback that
+// will receive an XRPC client to do direct atproto calls through.
+//
+// Note, the caller should not hold onto the xrpc.Client. The client is a copy
+// of the internal one and will not receive JWT token updates, so it *will* be
+// a dud after the JWT expiration time passes.
+func (c *Client) CustomCall(callback func(client *xrpc.Client) error) error {
+	// Refresh the JWT tokens before doing any user calls
+	c.maybeRefreshJWT()
+
+	// Create a copy of the xrpc client for power users
+	dangling := new(xrpc.Client)
+
+	c.jwtLock.RLock()
+	*dangling = *c.client
+	*dangling.Auth = *c.client.Auth
+
+	if c.client.AdminToken != nil {
+		dangling.AdminToken = new(string)
+		*dangling.AdminToken = *c.client.AdminToken
+	}
+	if c.client.UserAgent != nil {
+		dangling.UserAgent = new(string)
+		*dangling.UserAgent = *c.client.UserAgent
+	}
+	c.jwtLock.RUnlock()
+
+	// Run the user's callback against the copy of the authorized client
+	return callback(dangling)
 }

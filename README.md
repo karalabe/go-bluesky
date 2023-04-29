@@ -30,6 +30,8 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	defer client.Close()
+
 	err = client.Login(blueskyHandle, blueskyAppkey)
 	switch {
 		case errors.Is(err, bluesky.ErrMasterCredentials):
@@ -49,6 +51,26 @@ The above code will create a client authenticated against the given Bluesky serv
 automatically refresh the authorization token internally when it closes in on expiration. The auth 
 will be attempted to be refreshed async without blocking API calls if there's enough time left, or
 by blocking if it would be cutting it too close to expiration (or already expired).
+
+## Custom API calls
+
+As with any client library, there will inevitably come the time when the user wants to call something
+that is not wrapped (or not yet implemented because it's a new server feature). For those power use
+cases, the library exposes a custom caller that can be used to tap directly into the [atproto
+APIs](https://pkg.go.dev/github.com/bluesky-social/indigo/api/atproto).
+
+The custom caller will provide the user with an `xrpc.Client` that has valid user credentials and the
+user can do arbitrary atproto calls with it.
+
+```go
+client.CustomCall(func(api *xrpc.Client) error {
+	_, err := atproto.ServerGetSession(context.Background(), api)
+	return err
+})
+```
+
+*Note, the user should not retain the `xprc.Client` given to the callback as this is only a copy of
+the internal one and will not be updated with new JWT tokens when the old ones are expired.*
 
 ## Testing
 
