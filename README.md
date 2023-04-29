@@ -17,6 +17,7 @@ password, however, must be an application key. For security reasons this we will
 that allow full access to your user.
 
 ```go
+import "errors"
 import "github.com/karalabe/go-bluesky"
 
 var (
@@ -25,12 +26,12 @@ var (
 )
 
 func main() {
-	client, err := Dial(bluesky.ServerBskySocial)
+	client, err := bluesky.Dial(bluesky.ServerBskySocial)
 	if err != nil {
 		panic(err)
 	}
-	err := client.Login(blueskyHandle, blueskyAppkey)
-	select {
+	err = client.Login(blueskyHandle, blueskyAppkey)
+	switch {
 		case errors.Is(err, bluesky.ErrMasterCredentials):
 			panic("You're not allowed to use your full-access credentials, please create an appkey")
 		case errors.Is(err, bluesky.ErrLoginUnauthorized):
