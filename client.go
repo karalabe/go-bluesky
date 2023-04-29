@@ -48,23 +48,23 @@ var (
 type Client struct {
 	client *xrpc.Client // Underlying XRPC transport conencted to the API
 
+	jwtLock          sync.RWMutex                // Lock protecting the folllowing JWT auth fields
 	jwtCurrentExpire time.Time                   // Expiration time for the current JWT token
 	jwtRefreshExpire time.Time                   // Expiration time for the refresh JWT token
 	jwtAsyncRefresh  chan struct{}               // Channel tracking if an async refresher is running
 	jwtRefresherStop chan chan struct{}          // Notification channel to stop the JWT refresher
 	jwtRefreshHook   func(skip bool, async bool) // Testing hook to monitor when a refresh is triggered
-	jwtLock          sync.RWMutex                // Lock protecting the JWT auth fields
 }
 
 // Dial connects to a remote Bluesky server and exchanges some basic information
 // to ensure the connectivity works.
-func Dial(server string) (*Client, error) {
-	return DialWithClient(server, new(http.Client))
+func Dial(ctx context.Context, server string) (*Client, error) {
+	return DialWithClient(ctx, server, new(http.Client))
 }
 
 // DialWithClient connects to a remote Bluesky server using a user supplied HTTP
 // client and exchanges some basic information to ensure the connectivity works.
-func DialWithClient(server string, client *http.Client) (*Client, error) {
+func DialWithClient(ctx context.Context, server string, client *http.Client) (*Client, error) {
 	// Create the XRPC client from the supplied HTTP one
 	local := &xrpc.Client{
 		Client: client,
@@ -72,7 +72,7 @@ func DialWithClient(server string, client *http.Client) (*Client, error) {
 	}
 	// Do a sanity check with the server to ensure everything works. We don't
 	// really care about the response as long as we get a meaningful one.
-	if _, err := atproto.ServerDescribeServer(context.Background(), local); err != nil {
+	if _, err := atproto.ServerDescribeServer(ctx, local); err != nil {
 		return nil, err
 	}
 	return &Client{
@@ -85,9 +85,9 @@ func DialWithClient(server string, client *http.Client) (*Client, error) {
 // Note, authenticating with a live password instead of an application key will
 // be detected and rejected. For your security, this library will refuse to use
 // your master credentials.
-func (c *Client) Login(handle string, appkey string) error {
+func (c *Client) Login(ctx context.Context, handle string, appkey string) error {
 	// Authenticate to the Bluesky server
-	sess, err := atproto.ServerCreateSession(context.Background(), c.client, &atproto.ServerCreateSession_Input{
+	sess, err := atproto.ServerCreateSession(ctx, c.client, &atproto.ServerCreateSession_Input{
 		Identifier: handle,
 		Password:   appkey,
 	})
@@ -170,8 +170,9 @@ func (c *Client) maybeRefreshJWT() error {
 	// If the JWT token is still valid for a long time, use as is
 	c.jwtLock.RLock()
 	var (
-		validAsync = time.Until(c.jwtCurrentExpire) > jwtAsyncRefreshThreshold
-		validSync  = time.Until(c.jwtCurrentExpire) > jwtSyncRefreshThreshold
+		now        = time.Now()
+		validAsync = c.jwtCurrentExpire.Sub(now) > jwtAsyncRefreshThreshold
+		validSync  = c.jwtCurrentExpire.Sub(now) > jwtSyncRefreshThreshold
 	)
 	c.jwtLock.RUnlock()
 
