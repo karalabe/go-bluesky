@@ -30,6 +30,7 @@ func TestLogin(t *testing.T) {
 	ctx := context.Background()
 	client, _ := Dial(ctx, ServerBskySocial)
 	defer client.Close()
+
 	if err := client.Login(ctx, testAuthHandle, "definitely-not-my-password"); !errors.Is(err, ErrLoginUnauthorized) {
 		t.Errorf("invalid password error mismatch: have %v, want %v", err, ErrLoginUnauthorized)
 	}

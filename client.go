@@ -46,9 +46,9 @@ var (
 
 // Client is an API client attached to (and authenticated to) a Bluesky PDS instance.
 type Client struct {
-	client *xrpc.Client // Underlying XRPC transport conencted to the API
+	client *xrpc.Client // Underlying XRPC transport connected to the API
 
-	jwtLock          sync.RWMutex                // Lock protecting the folllowing JWT auth fields
+	jwtLock          sync.RWMutex                // Lock protecting the following JWT auth fields
 	jwtCurrentExpire time.Time                   // Expiration time for the current JWT token
 	jwtRefreshExpire time.Time                   // Expiration time for the refresh JWT token
 	jwtAsyncRefresh  chan struct{}               // Channel tracking if an async refresher is running
