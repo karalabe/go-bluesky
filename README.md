@@ -26,13 +26,15 @@ var (
 )
 
 func main() {
-	client, err := bluesky.Dial(bluesky.ServerBskySocial)
+	ctx := context.Background(),
+
+	client, err := bluesky.Dial(ctx, bluesky.ServerBskySocial)
 	if err != nil {
 		panic(err)
 	}
 	defer client.Close()
 
-	err = client.Login(blueskyHandle, blueskyAppkey)
+	err = client.Login(ctx, blueskyHandle, blueskyAppkey)
 	switch {
 		case errors.Is(err, bluesky.ErrMasterCredentials):
 			panic("You're not allowed to use your full-access credentials, please create an appkey")
