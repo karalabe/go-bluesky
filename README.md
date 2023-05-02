@@ -26,7 +26,7 @@ var (
 )
 
 func main() {
-	ctx := context.Background(),
+	ctx := context.Background()
 
 	client, err := bluesky.Dial(ctx, bluesky.ServerBskySocial)
 	if err != nil {
