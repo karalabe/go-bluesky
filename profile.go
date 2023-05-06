@@ -172,10 +172,10 @@ func (p *Profile) ResolveBannerWithLimit(ctx context.Context, bytes uint64) erro
 //
 // Note, since there is a fairly low limit on retrievable followers per API call,
 // this method might take a while to complete on larger accounts. You may use the
-// ResolveFollowersStreaming to have finer control over the rate of retrievals,
+// StreamFollowers to have finer control over the rate of retrievals,
 // interruptions and memory usage.
 func (p *Profile) ResolveFollowers(ctx context.Context) error {
-	followerc, errc := p.ResolveFollowersStreaming(ctx)
+	followerc, errc := p.StreamFollowers(ctx)
 
 	followers := make([]*User, 0, p.FollowerCount)
 	for follower := range followerc {
@@ -188,14 +188,14 @@ func (p *Profile) ResolveFollowers(ctx context.Context) error {
 	return nil
 }
 
-// ResolveFollowersStreaming gradually resolves the full list of followers of
+// StreamFollowers gradually resolves the full list of followers of
 // a profile, feeding them async into a result channel, closing the channel when
 // there are no more followers left. An error channel is also returned and will
 // receive (optionally, only ever one) error in case of a failure.
 //
 // Note, this method is meant to process the follower list as a stream, and will
 // thus not populate the profile's followers field.
-func (p *Profile) ResolveFollowersStreaming(ctx context.Context) (<-chan *User, <-chan error) {
+func (p *Profile) StreamFollowers(ctx context.Context) (<-chan *User, <-chan error) {
 	var (
 		cursor    string
 		followers = make(chan *User, 100) // Ensure all results fit to unblock a second call
@@ -254,10 +254,10 @@ func (p *Profile) ResolveFollowersStreaming(ctx context.Context) (<-chan *User, 
 //
 // Note, since there is a fairly low limit on retrievable followees per API call,
 // this method might take a while to complete on larger accounts. You may use the
-// ResolveFolloweesStreaming to have finer control over the rate of retrievals,
+// StreamFollowees to have finer control over the rate of retrievals,
 // interruptions and memory usage.
 func (p *Profile) ResolveFollowees(ctx context.Context) error {
-	followeec, errc := p.ResolveFolloweesStreaming(ctx)
+	followeec, errc := p.StreamFollowees(ctx)
 
 	followees := make([]*User, 0, p.FolloweeCount)
 	for followee := range followeec {
@@ -270,14 +270,14 @@ func (p *Profile) ResolveFollowees(ctx context.Context) error {
 	return nil
 }
 
-// ResolveFolloweesStreaming gradually resolves the full list of followees of
+// StreamFollowees gradually resolves the full list of followees of
 // a profile, feeding them async into a result channel, closing the channel when
 // there are no more followees left. An error channel is also returned and will
 // receive (optionally, only ever one) error in case of a failure.
 //
 // Note, this method is meant to process the followeer list as a stream, and will
 // thus not populate the profile's followees field.
-func (p *Profile) ResolveFolloweesStreaming(ctx context.Context) (<-chan *User, <-chan error) {
+func (p *Profile) StreamFollowees(ctx context.Context) (<-chan *User, <-chan error) {
 	var (
 		cursor    string
 		followees = make(chan *User, 100) // Ensure all results fit to unblock a second call
