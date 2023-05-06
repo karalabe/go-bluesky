@@ -185,7 +185,7 @@ func TestJWTSyncRefresh(t *testing.T) {
 	}
 }
 
-// Tests that if even the JWT refresh token got expired, teh refresher errors
+// Tests that if even the JWT refresh token got expired, the refresher errors
 // out synchronously.
 func TestJWTExpiredRefresh(t *testing.T) {
 	client := makeTestClientWithLogin(t)

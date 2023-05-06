@@ -3,7 +3,7 @@ module github.com/karalabe/go-bluesky
 go 1.20
 
 require (
-	github.com/bluesky-social/indigo v0.0.0-20230427175929-5c4a333d142a
+	github.com/bluesky-social/indigo v0.0.0-20230504025040-8915cccc3319
 	github.com/golang-jwt/jwt/v5 v5.0.0
 )
 

@@ -1,5 +1,10 @@
 # Bluesky API client from Go
 
+[![API Reference](
+https://camo.githubusercontent.com/915b7be44ada53c290eb157634330494ebe3e30a/68747470733a2f2f676f646f632e6f72672f6769746875622e636f6d2f676f6c616e672f6764646f3f7374617475732e737667
+)](https://pkg.go.dev/github.com/karalabe/go-bluesky)
+[![Go Report Card](https://goreportcard.com/badge/github.com/karalabe/go-bluesky)](https://goreportcard.com/report/github.com/karalabe/go-bluesky)
+
 This is a [Bluesky](https://bsky.app/) client library written in Go. It requires a Bluesky account
 to connect through and an application password to authenticate with.
 
@@ -53,6 +58,91 @@ The above code will create a client authenticated against the given Bluesky serv
 automatically refresh the authorization token internally when it closes in on expiration. The auth 
 will be attempted to be refreshed async without blocking API calls if there's enough time left, or
 by blocking if it would be cutting it too close to expiration (or already expired).
+
+## Profiles and images
+
+Any user's profile can be retrieved via the `bluesky.Client.FetchProfile` method. This will return
+some basic metadata about the user.
+
+```go
+profile, err := client.FetchProfile(ctx, "karalabe.bsky.social")
+if err != nil {
+	panic(err)
+}
+fmt.Println("Name:", profile.Name)
+fmt.Println("  - Followers:", profile.FollowerCount)
+fmt.Println("  - Follows:", profile.FolloweeCount)
+fmt.Println("  - Posts:", profile.PostCount)
+```
+
+Certain fields, like avatars and banner images are not retrieved by default since they are probably
+large and most use cases don't need them. If the image URLs are not enough, the images themselves
+can also be retrieved lazily into `image.Image` fields.
+
+```go
+if err := profile.ResolveAvatar(ctx); err != nil {
+	panic(err)
+}
+fmt.Println("Avatar size:", profile.Avatar.Bounds())
+
+if err := profile.ResolveBanner(ctx); err != nil {
+	panic(err)
+}
+fmt.Println("Banner size:", profile.Banner.Bounds())
+```
+
+## Social graph
+
+Being a social network, there's not much fun without being able to hop though the social graph. A
+user profile is a good starting point to do that! The list of followers and followees of a user can
+both be retrieved lazily after fetching the profile.
+
+```go
+fmt.Println("User followed by:")
+if err := profile.ResolveFollowers(ctx); err != nil {
+	panic(err)
+}
+for _, follower := range profile.Followers {
+	fmt.Println("  -", follower)
+}
+
+fmt.Println("User follows:")
+if err := profile.ResolveFollowees(ctx); err != nil {
+    panic(err)
+}
+for _, followee := range profile.Followees {
+	fmt.Println("  -", followee)
+}
+```
+
+The above resolvers are elegant, self-contained methods, but if the follower/followee count of a
+user is significant, it might be suboptimal to just wait hoping for the method to eventually return
+without using up too much memory. A more powerful way is to request the follower/followees to be
+returned as a stream as they are crawled!
+
+```go
+fmt.Println("User followed by:")
+followerc, errc := profile.ResolveFollowersWithChannel(ctx)
+for follower := range followerc { // Pull the users from the channel as they arrive
+	fmt.Println("  -", follower)
+}
+if err := <-errc; err != nil {
+	panic(err)
+}
+
+fmt.Println("User follows:")
+followeec, errc := profile.ResolveFollowersWithChannel(ctx)
+for followee := range followeec { // Pull the users from the channel as they arrive
+	fmt.Println("  -", followee)
+}
+if err := <-errc; err != nil {
+	panic(err)
+}
+```
+
+Of course, as with the user profiles, follower and followee items also contain certain lazy resolvable
+fields like the profile picture. In order however to crawl the social graph further, you will need to
+fetch the profile of a follower/followee first and go from there.
 
 ## Custom API calls
 
