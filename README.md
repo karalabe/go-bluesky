@@ -122,7 +122,7 @@ returned as a stream as they are crawled!
 
 ```go
 fmt.Println("User followed by:")
-followerc, errc := profile.ResolveFollowersWithChannel(ctx)
+followerc, errc := profile.ResolveFollowersStreaming(ctx)
 for follower := range followerc { // Pull the users from the channel as they arrive
 	fmt.Println("  -", follower)
 }
@@ -131,7 +131,7 @@ if err := <-errc; err != nil {
 }
 
 fmt.Println("User follows:")
-followeec, errc := profile.ResolveFollowersWithChannel(ctx)
+followeec, errc := profile.ResolveFollowersStreaming(ctx)
 for followee := range followeec { // Pull the users from the channel as they arrive
 	fmt.Println("  -", followee)
 }

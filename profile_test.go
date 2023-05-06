@@ -155,7 +155,7 @@ func TestResolveProfileFollowersWithCancellation(t *testing.T) {
 	// Resolve the followers indirectly via channels, cancelling after the first
 	// read, ensuring that the full list does not get crawled
 	cctx, cancel := context.WithCancel(ctx)
-	followerc, errc := profile.ResolveFollowersWithChannel(cctx)
+	followerc, errc := profile.ResolveFollowersStreaming(cctx)
 
 	<-followerc
 	retrieved := 1
@@ -237,7 +237,7 @@ func TestResolveProfileFolloweesWithCancellation(t *testing.T) {
 	// Resolve the followees indirectly via channels, cancelling after the first
 	// read, ensuring that the full list does not get crawled
 	cctx, cancel := context.WithCancel(ctx)
-	followeec, errc := profile.ResolveFolloweesWithChannel(cctx)
+	followeec, errc := profile.ResolveFolloweesStreaming(cctx)
 
 	<-followeec
 	retrieved := 1
